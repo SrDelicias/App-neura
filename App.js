@@ -1,8 +1,3 @@
-// Código completo actualizado con:
-// - buscador con ícono
-// - cierre al pulsar fuera
-// - edición de nota al pulsar
-
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -14,9 +9,10 @@ import {
   Alert,
   TouchableWithoutFeedback,
   Keyboard,
+  Animated
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 
 export default function App() {
   const [notas, setNotas] = useState([]);
@@ -25,6 +21,7 @@ export default function App() {
   const [expandirNotaId, setExpandirNotaId] = useState(null);
   const [busqueda, setBusqueda] = useState('');
   const [mostrarBusqueda, setMostrarBusqueda] = useState(false);
+  const [menuAbierto, setMenuAbierto] = useState(false);
 
   useEffect(() => {
     cargarNotas();
@@ -120,7 +117,6 @@ export default function App() {
     <TouchableOpacity
       activeOpacity={0.8}
       onPress={() => toggleExpandirNota(item.id)}
-      onPressIn={(e) => e.stopPropagation()}
     >
       <View style={[styles.nota, { backgroundColor: item.color }]}>
         <View style={styles.notaFila}>
@@ -131,7 +127,6 @@ export default function App() {
                 onChangeText={(text) => editarTextoNota(item.id, text)}
                 multiline
                 style={styles.textoNotaEditable}
-                onPressIn={(e) => e.stopPropagation()}
               />
             ) : (
               <Text style={styles.textoNota}>{item.texto}</Text>
@@ -203,8 +198,32 @@ export default function App() {
           data={notasFiltradas}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
-          contentContainerStyle={{ paddingBottom: 100 }}
+          contentContainerStyle={{ paddingBottom: 150 }}
         />
+
+        {/* FAB: Menú flotante */}
+        <View style={styles.fabContainer}>
+          {menuAbierto && (
+            <>
+              <TouchableOpacity style={styles.fabOption} onPress={() => {}}>
+                <Ionicons name="text" size={20} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.fabOption} onPress={() => {}}>
+                <MaterialCommunityIcons name="microphone" size={20} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.fabOption} onPress={() => {}}>
+                <FontAwesome5 name="list" size={20} color="#fff" />
+              </TouchableOpacity>
+            </>
+          )}
+
+          <TouchableOpacity
+            style={styles.fabPrincipal}
+            onPress={() => setMenuAbierto(!menuAbierto)}
+          >
+            <MaterialCommunityIcons name="lightning-bolt" size={24} color="#fff" />
+          </TouchableOpacity>
+        </View>
       </View>
     </TouchableWithoutFeedback>
   );
@@ -319,4 +338,29 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ccc',
   },
+  fabContainer: {
+    position: 'absolute',
+    bottom: 30,
+    right: 30,
+    alignItems: 'flex-end',
+    gap: 12,
+  },
+  fabPrincipal: {
+    backgroundColor: '#ff00aa',
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 5,
+  },
+  fabOption: {
+    backgroundColor: '#6200ee',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 4,
+  }
 });
