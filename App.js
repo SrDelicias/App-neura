@@ -1,166 +1,264 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, FlatList, TouchableOpacity, StyleSheet, Modal } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// Código completo actualizado con:
+// - buscador con ícono
+// - cierre al pulsar fuera
+// - edición de nota al pulsar
 
-const coloresDisponibles = ['#ffffff', '#ffeb3b', '#ffccbc', '#c8e6c9', '#bbdefb', '#f8bbd0', '#d1c4e9'];
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  StyleSheet,
+  Alert,
+  TouchableWithoutFeedback,
+  Keyboard,
+} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
 
 export default function App() {
-  const [nota, setNota] = useState('');
   const [notas, setNotas] = useState([]);
-  const [colorSelectorVisible, setColorSelectorVisible] = useState(false);
-  const [notaParaColor, setNotaParaColor] = useState(null); // id de la nota que está eligiendo color
-  const [modalEditarVisible, setModalEditarVisible] = useState(false);
-  const [notaEditando, setNotaEditando] = useState(null); // objeto nota que editamos
-  const [textoEditado, setTextoEditado] = useState(''); // texto temporal del input
+  const [nuevaNota, setNuevaNota] = useState('');
+  const [notaSeleccionadaParaColor, setNotaSeleccionadaParaColor] = useState(null);
+  const [expandirNotaId, setExpandirNotaId] = useState(null);
+  const [busqueda, setBusqueda] = useState('');
+  const [mostrarBusqueda, setMostrarBusqueda] = useState(false);
 
   useEffect(() => {
-    const cargarNotas = async () => {
-      const notasGuardadas = await AsyncStorage.getItem('notas');
-      if (notasGuardadas) setNotas(JSON.parse(notasGuardadas));
-    };
     cargarNotas();
   }, []);
 
-  useEffect(() => {
-    AsyncStorage.setItem('notas', JSON.stringify(notas));
-  }, [notas]);
+  const guardarNotas = async (nuevasNotas) => {
+    try {
+      await AsyncStorage.setItem('notas', JSON.stringify(nuevasNotas));
+    } catch (error) {
+      console.error('Error guardando notas:', error);
+    }
+  };
+
+  const cargarNotas = async () => {
+    try {
+      const notasGuardadas = await AsyncStorage.getItem('notas');
+      if (notasGuardadas) {
+        setNotas(JSON.parse(notasGuardadas));
+      }
+    } catch (error) {
+      console.error('Error cargando notas:', error);
+    }
+  };
 
   const agregarNota = () => {
-    if (nota.trim() === '') return;
-    const fechaCreacion = new Date().toLocaleDateString(); // solo fecha, sin hora
-    const nuevaNota = {
+    if (nuevaNota.trim() === '') return;
+    const fecha = new Date().toLocaleDateString();
+    const nueva = {
       id: Date.now().toString(),
-      texto: nota,
+      texto: nuevaNota,
       color: '#ffffff',
-      fecha: fechaCreacion,
+      fecha,
     };
-    setNotas([...notas, nuevaNota]);
-    setNota('');
+    const nuevasNotas = [nueva, ...notas];
+    setNotas(nuevasNotas);
+    guardarNotas(nuevasNotas);
+    setNuevaNota('');
   };
-
 
   const eliminarNota = (id) => {
-    setNotas(notas.filter(n => n.id !== id));
+    Alert.alert(
+      'Eliminar nota',
+      '¿Estás seguro de que quieres eliminar esta nota?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: () => {
+            const nuevasNotas = notas.filter(nota => nota.id !== id);
+            setNotas(nuevasNotas);
+            guardarNotas(nuevasNotas);
+          }
+        }
+      ]
+    );
   };
 
-  const abrirSelectorColor = (id) => {
-    setNotaParaColor(id);
-    setColorSelectorVisible(true);
+  const cambiarColorNota = (id) => {
+    if (notaSeleccionadaParaColor === id) {
+      setNotaSeleccionadaParaColor(null);
+    } else {
+      setNotaSeleccionadaParaColor(id);
+    }
   };
 
-  const elegirColor = (color) => {
-    setNotas(notas.map(n => n.id === notaParaColor ? { ...n, color } : n));
-    setColorSelectorVisible(false);
-    setNotaParaColor(null);
-  };
-  const abrirEditarNota = (nota) => {
-  setNotaEditando(nota);
-  setTextoEditado(nota.texto);
-  setModalEditarVisible(true);
+  const seleccionarColor = (id, color) => {
+    const nuevasNotas = notas.map((nota) =>
+      nota.id === id ? { ...nota, color } : nota
+    );
+    setNotas(nuevasNotas);
+    guardarNotas(nuevasNotas);
+    setNotaSeleccionadaParaColor(null);
   };
 
-  const guardarEdicion = () => {
-  if (textoEditado.trim() === '') return; // no dejar vacío
-  setNotas(notas.map(n => 
-    n.id === notaEditando.id ? { ...n, texto: textoEditado } : n
-  ));
-  setModalEditarVisible(false);
-  setNotaEditando(null);
-  setTextoEditado('');
+  const toggleExpandirNota = (id) => {
+    setExpandirNotaId(expandirNotaId === id ? null : id);
   };
 
+  const editarTextoNota = (id, nuevoTexto) => {
+    const nuevasNotas = notas.map((nota) =>
+      nota.id === id ? { ...nota, texto: nuevoTexto } : nota
+    );
+    setNotas(nuevasNotas);
+    guardarNotas(nuevasNotas);
+  };
 
+  const notasFiltradas = notas.filter(nota =>
+    nota.texto.toLowerCase().includes(busqueda.toLowerCase())
+  );
 
-  return (
-    <View style={styles.container}>
-      <Text style={styles.titulo}>Bienvenido a Neura</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Escribe una nota..."
-        value={nota}
-        onChangeText={setNota}
-      />
-      <TouchableOpacity style={styles.boton} onPress={agregarNota}>
-        <Text style={styles.botonTexto}>Agregar nota</Text>
-      </TouchableOpacity>
-
-      <FlatList
-        data={notas}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <View style={[styles.nota, { backgroundColor: item.color }]}>
-            <TouchableOpacity style={{ flex: 1 }} onPress={() => abrirEditarNota(item)}>
-              <Text>{item.texto}</Text>
-              <Text style={styles.fecha}>{item.fecha}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => abrirSelectorColor(item.id)}>
-              <Text style={styles.icono}>➕</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => eliminarNota(item.id)}>
-              <Text style={styles.icono}>🗑️</Text>
-            </TouchableOpacity>
+  const renderItem = ({ item }) => (
+    <TouchableOpacity
+      activeOpacity={0.8}
+      onPress={() => toggleExpandirNota(item.id)}
+      onPressIn={(e) => e.stopPropagation()}
+    >
+      <View style={[styles.nota, { backgroundColor: item.color }]}>
+        <View style={styles.notaFila}>
+          <View style={{ flex: 1 }}>
+            {expandirNotaId === item.id ? (
+              <TextInput
+                value={item.texto}
+                onChangeText={(text) => editarTextoNota(item.id, text)}
+                multiline
+                style={styles.textoNotaEditable}
+                onPressIn={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <Text style={styles.textoNota}>{item.texto}</Text>
+            )}
+            <Text style={styles.fecha}>{item.fecha}</Text>
           </View>
-
-        )}
-        style={{ marginTop: 20 }}
-      />
-
-      {/* Modal para seleccionar color */}
-      <Modal
-        visible={modalEditarVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setModalEditarVisible(false)}
-      >
-        <View style={styles.modalFondo}>
-          <View style={styles.modalContenido}>
-            <Text style={styles.modalTitulo}>Editar nota</Text>
-            <TextInput
-              style={styles.input}
-              multiline
-              value={textoEditado}
-              onChangeText={setTextoEditado}
-            />
-            <View style={{ flexDirection: 'row', marginTop: 10 }}>
-              <TouchableOpacity style={[styles.boton, { marginRight: 10 }]} onPress={guardarEdicion}>
-                <Text style={styles.botonTexto}>Guardar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.boton, { backgroundColor: '#ccc' }]} onPress={() => setModalEditarVisible(false)}>
-                <Text style={[styles.botonTexto, { color: '#333' }]}>Cancelar</Text>
-              </TouchableOpacity>
-            </View>
+          <View style={styles.iconos}>
+            <TouchableOpacity onPress={() => cambiarColorNota(item.id)} style={styles.iconoBtn}>
+              <Ionicons name="color-palette-outline" size={20} color="#555" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => eliminarNota(item.id)} style={styles.iconoBtn}>
+              <Ionicons name="trash-outline" size={20} color="#c00" />
+            </TouchableOpacity>
           </View>
         </View>
-      </Modal>
-    </View>
+        {notaSeleccionadaParaColor === item.id && (
+          <View style={styles.paleta}>
+            {['#ffffff', '#ffeb3b', '#ff8a65', '#81c784', '#64b5f6', '#ba68c8'].map((color) => (
+              <TouchableOpacity
+                key={color}
+                onPress={() => seleccionarColor(item.id, color)}
+                style={[styles.colorBoton, { backgroundColor: color }]}
+              />
+            ))}
+          </View>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+
+  return (
+    <TouchableWithoutFeedback onPress={() => {
+      if (mostrarBusqueda) setMostrarBusqueda(false);
+      Keyboard.dismiss();
+    }}>
+      <View style={styles.container}>
+        <Text style={styles.titulo}>Neura</Text>
+
+        <View style={styles.buscadorWrapper}>
+          {mostrarBusqueda ? (
+            <TextInput
+              placeholder="Buscar..."
+              value={busqueda}
+              onChangeText={setBusqueda}
+              style={styles.buscador}
+              autoFocus
+            />
+          ) : (
+            <TouchableOpacity onPress={() => setMostrarBusqueda(true)}>
+              <Ionicons name="search-outline" size={24} color="#555" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <View style={styles.entrada}>
+          <TextInput
+            placeholder="Escribe una nota..."
+            value={nuevaNota}
+            onChangeText={setNuevaNota}
+            style={styles.input}
+            multiline
+          />
+          <TouchableOpacity onPress={agregarNota} style={styles.boton}>
+            <Text style={styles.botonTexto}>Agregar</Text>
+          </TouchableOpacity>
+        </View>
+
+        <FlatList
+          data={notasFiltradas}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          contentContainerStyle={{ paddingBottom: 100 }}
+        />
+      </View>
+    </TouchableWithoutFeedback>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f2f2f2',
-    padding: 20,
+    backgroundColor: '#ffffdf',
     paddingTop: 50,
+    paddingHorizontal: 16,
   },
   titulo: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
-    marginBottom: 20,
+    marginBottom: 10,
+    textAlign: 'center',
+    color: '#333',
   },
-  input: {
-    backgroundColor: 'white',
-    padding: 10,
-    borderRadius: 6,
+  buscadorWrapper: {
+    alignItems: 'flex-end',
     marginBottom: 10,
   },
+  buscador: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 16,
+    borderColor: '#ccc',
+    borderWidth: 1,
+    width: '100%',
+  },
+  entrada: {
+    flexDirection: 'column',
+    marginBottom: 20,
+    gap: 10,
+  },
+  input: {
+    borderColor: '#ccc',
+    borderWidth: 1,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    fontSize: 16,
+    minHeight: 100,
+    textAlignVertical: 'top',
+  },
   boton: {
-    backgroundColor: '#4CAF50',
-    paddingVertical: 10,
+    backgroundColor: '#6200ee',
+    paddingVertical: 12,
     paddingHorizontal: 20,
-    borderRadius: 6,
+    borderRadius: 8,
     alignSelf: 'center',
-    marginTop: 10,
   },
   botonTexto: {
     color: 'white',
@@ -168,59 +266,57 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   nota: {
-    backgroundColor: '#fff',
     padding: 12,
-    marginBottom: 10,
+    borderRadius: 10,
+    marginBottom: 12,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  textoNota: {
+    fontSize: 16,
+    marginBottom: 6,
+    color: '#333',
+  },
+  textoNotaEditable: {
+    fontSize: 16,
+    marginBottom: 6,
+    color: '#333',
+    backgroundColor: '#f0f0f0',
     borderRadius: 6,
+    padding: 6,
+  },
+  fecha: {
+    fontSize: 12,
+    color: '#999',
+    marginBottom: 10,
+  },
+  notaFila: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
   },
-  icono: {
-    fontSize: 18,
+  iconos: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  iconoBtn: {
     marginLeft: 10,
-  },
-  modalFondo: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContenido: {
-    backgroundColor: 'white',
-    borderRadius: 8,
-    padding: 20,
-    width: '80%',
-    alignItems: 'center',
-  },
-  modalTitulo: {
-    fontSize: 18,
-    marginBottom: 15,
   },
   paleta: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
+    marginTop: 10,
+    flexWrap: 'wrap',
   },
-  colorCirculo: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  colorBoton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    marginRight: 8,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#ccc',
-  },
-  fecha: {
-  fontSize: 12,
-  color: '#999',  // color gris claro
-  marginTop: 4,
-  opacity: 0.6,   // hace que sea más tenue
-  },
-  input: {
-  backgroundColor: 'white',
-  padding: 10,
-  borderRadius: 6,
-  minHeight: 60,
-  maxHeight: 150,
-  textAlignVertical: 'top',
   },
 });
