@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,22 +9,41 @@ import {
   Alert,
   TouchableWithoutFeedback,
   Keyboard,
-  Animated
+  Modal,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { Audio } from 'expo-av';
 
 export default function App() {
   const [notas, setNotas] = useState([]);
-  const [nuevaNota, setNuevaNota] = useState('');
   const [notaSeleccionadaParaColor, setNotaSeleccionadaParaColor] = useState(null);
   const [expandirNotaId, setExpandirNotaId] = useState(null);
   const [busqueda, setBusqueda] = useState('');
   const [mostrarBusqueda, setMostrarBusqueda] = useState(false);
   const [menuAbierto, setMenuAbierto] = useState(false);
+  const [modalTextoVisible, setModalTextoVisible] = useState(false);
+  const [nuevaNota, setNuevaNota] = useState('');
+  const [grabando, setGrabando] = useState(false);
+  const [grabacion, setGrabacion] = useState(null);
+  const [modalListaVisible, setModalListaVisible] = useState(false);
+  const [nuevaLista, setNuevaLista] = useState('');
+  const [tareasLista, setTareasLista] = useState([]);
+
+  // NUEVO ESTADO para reproducir audio
+  const [reproduciendoId, setReproduciendoId] = useState(null);
+  const soundRef = useRef(null);
 
   useEffect(() => {
     cargarNotas();
+
+    // Cleanup on unmount
+    return () => {
+      if (soundRef.current) {
+        soundRef.current.unloadAsync();
+        soundRef.current = null;
+      }
+    };
   }, []);
 
   const guardarNotas = async (nuevasNotas) => {
@@ -46,19 +65,18 @@ export default function App() {
     }
   };
 
-  const agregarNota = () => {
-    if (nuevaNota.trim() === '') return;
+  const agregarNota = (texto) => {
     const fecha = new Date().toLocaleDateString();
     const nueva = {
       id: Date.now().toString(),
-      texto: nuevaNota,
+      texto,
       color: '#ffffff',
       fecha,
+      tipo: 'texto',
     };
     const nuevasNotas = [nueva, ...notas];
     setNotas(nuevasNotas);
     guardarNotas(nuevasNotas);
-    setNuevaNota('');
   };
 
   const eliminarNota = (id) => {
@@ -71,6 +89,9 @@ export default function App() {
           text: 'Eliminar',
           style: 'destructive',
           onPress: () => {
+            if (reproduciendoId === id) {
+              pararAudio();
+            }
             const nuevasNotas = notas.filter(nota => nota.id !== id);
             setNotas(nuevasNotas);
             guardarNotas(nuevasNotas);
@@ -110,8 +131,111 @@ export default function App() {
   };
 
   const notasFiltradas = notas.filter(nota =>
-    nota.texto.toLowerCase().includes(busqueda.toLowerCase())
+    (nota.texto || '').toLowerCase().includes(busqueda.toLowerCase())
   );
+
+  const empezarGrabacion = async () => {
+    try {
+      const { granted } = await Audio.requestPermissionsAsync();
+      if (!granted) return;
+
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+
+      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      setGrabando(true);
+      setGrabacion(recording);
+    } catch (error) {
+      console.error('Error al empezar grabación:', error);
+    }
+  };
+
+  const detenerGrabacion = async () => {
+    try {
+      setGrabando(false);
+      await grabacion.stopAndUnloadAsync();
+      const uri = grabacion.getURI();
+      const fecha = new Date().toLocaleDateString();
+      const nuevaNotaAudio = {
+        id: Date.now().toString(),
+        uri,
+        color: '#ffffff',
+        fecha,
+        tipo: 'audio',
+      };
+      const nuevasNotas = [nuevaNotaAudio, ...notas];
+      setNotas(nuevasNotas);
+      guardarNotas(nuevasNotas);
+      setGrabacion(null);
+    } catch (error) {
+      console.error('Error al detener grabación:', error);
+    }
+  };
+
+  // NUEVAS FUNCIONES para reproducir audio
+
+  const reproducirAudio = async (nota) => {
+    try {
+      if (reproduciendoId === nota.id) {
+        // Ya está reproduciendo esta nota, la paramos
+        await pararAudio();
+        return;
+      }
+      // Si hay otro sonido reproduciéndose, lo paramos
+      if (soundRef.current) {
+        await soundRef.current.unloadAsync();
+        soundRef.current = null;
+      }
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: nota.uri },
+        { shouldPlay: true }
+      );
+      soundRef.current = sound;
+      setReproduciendoId(nota.id);
+
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (!status.isPlaying) {
+          // Cuando termina la reproducción
+          setReproduciendoId(null);
+          sound.unloadAsync();
+          soundRef.current = null;
+        }
+      });
+    } catch (error) {
+      console.error('Error reproduciendo audio:', error);
+      setReproduciendoId(null);
+    }
+  };
+
+  const pararAudio = async () => {
+    if (soundRef.current) {
+      try {
+        await soundRef.current.stopAsync();
+        await soundRef.current.unloadAsync();
+      } catch (error) {
+        console.error('Error parando audio:', error);
+      }
+      soundRef.current = null;
+    }
+    setReproduciendoId(null);
+  };
+
+  const agregarLista = () => {
+    if (!tareasLista.length) return;
+    const fecha = new Date().toLocaleDateString();
+    const nuevaNotaLista = {
+      id: Date.now().toString(),
+      color: '#ffffff',
+      fecha,
+      tipo: 'lista',
+      lista: tareasLista,
+    };
+    const nuevasNotas = [nuevaNotaLista, ...notas];
+    setNotas(nuevasNotas);
+    guardarNotas(nuevasNotas);
+    setNuevaLista('');
+    setTareasLista([]);
+    setModalListaVisible(false);
+  };
 
   const renderItem = ({ item }) => (
     <TouchableOpacity
@@ -121,232 +245,318 @@ export default function App() {
       <View style={[styles.nota, { backgroundColor: item.color }]}>
         <View style={styles.notaFila}>
           <View style={{ flex: 1 }}>
-            {expandirNotaId === item.id ? (
+            {item.tipo === 'audio' ? (
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center' }}
+                onPress={() => reproducirAudio(item)}
+              >
+                <Ionicons
+                  name={reproduciendoId === item.id ? 'pause-circle' : 'play-circle'}
+                  size={40}
+                  color="#555"
+                />
+                <Text style={{ marginLeft: 8, color: '#555' }}>
+                  {reproduciendoId === item.id ? 'Reproduciendo...' : 'Reproducir audio'}
+                </Text>
+              </TouchableOpacity>
+            ) : item.tipo === 'lista' ? (
+              item.lista.map((tarea, index) => (
+                <Text key={index} style={styles.textoNota}>• {tarea}</Text>
+              ))
+            ) : expandirNotaId === item.id ? (
               <TextInput
-                value={item.texto}
-                onChangeText={(text) => editarTextoNota(item.id, text)}
+                style={[styles.textoNota, { minHeight: 60 }]}
                 multiline
-                style={styles.textoNotaEditable}
+                value={item.texto}
+                onChangeText={(texto) => editarTextoNota(item.id, texto)}
+                autoFocus
               />
             ) : (
-              <Text style={styles.textoNota}>{item.texto}</Text>
+              <Text style={styles.textoNota} numberOfLines={3}>
+                {item.texto}
+              </Text>
             )}
-            <Text style={styles.fecha}>{item.fecha}</Text>
           </View>
-          <View style={styles.iconos}>
-            <TouchableOpacity onPress={() => cambiarColorNota(item.id)} style={styles.iconoBtn}>
-              <Ionicons name="color-palette-outline" size={20} color="#555" />
+
+          <View style={styles.iconosDerecha}>
+            <TouchableOpacity onPress={() => cambiarColorNota(item.id)}>
+              <Ionicons name="color-palette" size={22} color="gray" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => eliminarNota(item.id)} style={styles.iconoBtn}>
-              <Ionicons name="trash-outline" size={20} color="#c00" />
+            <TouchableOpacity onPress={() => eliminarNota(item.id)}>
+              <MaterialIcons name="delete" size={24} color="gray" />
             </TouchableOpacity>
           </View>
         </View>
+
         {notaSeleccionadaParaColor === item.id && (
-          <View style={styles.paleta}>
-            {['#ffffff', '#ffeb3b', '#ff8a65', '#81c784', '#64b5f6', '#ba68c8'].map((color) => (
+          <View style={styles.paletaColores}>
+            {['#ffffff', '#ffebcd', '#ffc0cb', '#add8e6', '#90ee90', '#ffffe0'].map((color) => (
               <TouchableOpacity
                 key={color}
+                style={[styles.colorCirculo, { backgroundColor: color }]}
                 onPress={() => seleccionarColor(item.id, color)}
-                style={[styles.colorBoton, { backgroundColor: color }]}
               />
             ))}
           </View>
         )}
+
+        <Text style={styles.fechaNota}>{item.fecha}</Text>
       </View>
     </TouchableOpacity>
   );
 
   return (
-    <TouchableWithoutFeedback onPress={() => {
-      if (mostrarBusqueda) setMostrarBusqueda(false);
-      Keyboard.dismiss();
-    }}>
-      <View style={styles.container}>
-        <Text style={styles.titulo}>Neura</Text>
+    <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); setNotaSeleccionadaParaColor(null); }}>
+      <View style={styles.contenedor}>
 
-        <View style={styles.buscadorWrapper}>
-          {mostrarBusqueda ? (
+        {/* Título fijo arriba */}
+        <View style={styles.header}>
+          <Text style={styles.titulo}>Neura</Text>
+        </View>
+
+        {/* Barra superior con búsqueda */}
+        {mostrarBusqueda && (
+          <View style={styles.barraBusqueda}>
             <TextInput
-              placeholder="Buscar..."
+              style={styles.entradaBusqueda}
+              placeholder="Buscar notas..."
               value={busqueda}
               onChangeText={setBusqueda}
-              style={styles.buscador}
               autoFocus
             />
-          ) : (
-            <TouchableOpacity onPress={() => setMostrarBusqueda(true)}>
-              <Ionicons name="search-outline" size={24} color="#555" />
+            <TouchableOpacity onPress={() => { setBusqueda(''); setMostrarBusqueda(false); }}>
+              <Ionicons name="close-circle" size={24} color="gray" />
             </TouchableOpacity>
-          )}
-        </View>
-
-        <View style={styles.entrada}>
-          <TextInput
-            placeholder="Escribe una nota..."
-            value={nuevaNota}
-            onChangeText={setNuevaNota}
-            style={styles.input}
-            multiline
-          />
-          <TouchableOpacity onPress={agregarNota} style={styles.boton}>
-            <Text style={styles.botonTexto}>Agregar</Text>
-          </TouchableOpacity>
-        </View>
+          </View>
+        )}
 
         <FlatList
           data={notasFiltradas}
-          keyExtractor={(item) => item.id}
           renderItem={renderItem}
-          contentContainerStyle={{ paddingBottom: 150 }}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ paddingBottom: 120, paddingTop: mostrarBusqueda ? 0 : 10 }}
+          ListEmptyComponent={<Text style={{ textAlign: 'center', marginTop: 20 }}>No hay notas.</Text>}
+          style={{ marginTop: mostrarBusqueda ? 10 : 0 }}
         />
 
-        {/* FAB: Menú flotante */}
-        <View style={styles.fabContainer}>
+        {/* Menú flotante */}
+        <View style={styles.menuFlotante}>
+          <TouchableOpacity
+            style={styles.botonFlotante}
+            onPress={() => setMenuAbierto(!menuAbierto)}
+          >
+            <Ionicons name="add" size={36} color="#fff" />
+          </TouchableOpacity>
+
           {menuAbierto && (
             <>
-              <TouchableOpacity style={styles.fabOption} onPress={() => {}}>
-                <Ionicons name="text" size={20} color="#fff" />
+              <TouchableOpacity
+                style={[styles.botonFlotantePequeño, { bottom: 80 }]}
+                onPress={() => { setModalTextoVisible(true); setMenuAbierto(false); }}
+              >
+                <Ionicons name="document-text" size={28} color="#fff" />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.fabOption} onPress={() => {}}>
-                <MaterialCommunityIcons name="microphone" size={20} color="#fff" />
+              <TouchableOpacity
+                style={[styles.botonFlotantePequeño, { bottom: 140 }]}
+                onPress={grabando ? detenerGrabacion : empezarGrabacion}
+              >
+                <Ionicons
+                  name={grabando ? 'stop-circle' : 'mic'}
+                  size={28}
+                  color={grabando ? '#f00' : '#fff'}
+                />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.fabOption} onPress={() => {}}>
-                <FontAwesome5 name="list" size={20} color="#fff" />
+              <TouchableOpacity
+                style={[styles.botonFlotantePequeño, { bottom: 200 }]}
+                onPress={() => { setModalListaVisible(true); setMenuAbierto(false); }}
+              >
+                <Ionicons name="list" size={28} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.botonFlotantePequeño, { bottom: 260 }]}
+                onPress={() => { setMostrarBusqueda(true); setMenuAbierto(false); }}
+              >
+                <Ionicons name="search" size={28} color="#fff" />
               </TouchableOpacity>
             </>
           )}
-
-          <TouchableOpacity
-            style={styles.fabPrincipal}
-            onPress={() => setMenuAbierto(!menuAbierto)}
-          >
-            <MaterialCommunityIcons name="lightning-bolt" size={24} color="#fff" />
-          </TouchableOpacity>
         </View>
+
+        {/* Modal para agregar nota de texto */}
+        <Modal
+          visible={modalTextoVisible}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setModalTextoVisible(false)}
+        >
+          <View style={styles.modalFondo}>
+            <View style={styles.modalContenido}>
+              <Text style={styles.modalTitulo}>Nueva nota de texto</Text>
+              <TextInput
+                style={styles.inputModal}
+                placeholder="Escribe tu nota aquí..."
+                value={nuevaNota}
+                onChangeText={setNuevaNota}
+                multiline
+              />
+              <View style={styles.filaBotonesModal}>
+                <TouchableOpacity
+                  style={[styles.botonModal, { backgroundColor: '#ccc' }]}
+                  onPress={() => { setNuevaNota(''); setModalTextoVisible(false); }}
+                >
+                  <Text>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.botonModal, { backgroundColor: '#4CAF50' }]}
+                  onPress={() => {
+                    if (nuevaNota.trim().length === 0) return;
+                    agregarNota(nuevaNota.trim());
+                    setNuevaNota('');
+                    setModalTextoVisible(false);
+                  }}
+                >
+                  <Text style={{ color: '#fff' }}>Agregar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Modal para agregar lista */}
+        <Modal
+          visible={modalListaVisible}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setModalListaVisible(false)}
+        >
+          <View style={styles.modalFondo}>
+            <View style={styles.modalContenido}>
+              <Text style={styles.modalTitulo}>Nueva lista</Text>
+              <TextInput
+                style={styles.inputModal}
+                placeholder="Escribe tarea y presiona Enter"
+                value={nuevaLista}
+                onChangeText={setNuevaLista}
+                onSubmitEditing={() => {
+                  if (nuevaLista.trim().length === 0) return;
+                  setTareasLista([...tareasLista, nuevaLista.trim()]);
+                  setNuevaLista('');
+                }}
+                returnKeyType="done"
+              />
+              <FlatList
+                data={tareasLista}
+                keyExtractor={(_, index) => index.toString()}
+                renderItem={({ item }) => (
+                  <Text style={styles.textoLista}>• {item}</Text>
+                )}
+                style={{ maxHeight: 150, marginVertical: 10 }}
+              />
+              <View style={styles.filaBotonesModal}>
+                <TouchableOpacity
+                  style={[styles.botonModal, { backgroundColor: '#ccc' }]}
+                  onPress={() => {
+                    setNuevaLista('');
+                    setTareasLista([]);
+                    setModalListaVisible(false);
+                  }}
+                >
+                  <Text>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.botonModal, { backgroundColor: '#4CAF50' }]}
+                  onPress={() => {
+                    agregarLista();
+                  }}
+                >
+                  <Text style={{ color: '#fff' }}>Agregar lista</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </View>
     </TouchableWithoutFeedback>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  contenedor: {
     flex: 1,
-    backgroundColor: '#ffffdf',
-    paddingTop: 50,
-    paddingHorizontal: 16,
+    backgroundColor: '#f5f5f5',
+    paddingTop: 100, // espacio para el header fijo
+  },
+  header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 90, // antes era 50
+    backgroundColor: '#2196F3',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingBottom: 10, // para centrar el texto visualmente
+    paddingTop: 20,    // extra espacio superior
+    elevation: 5,
+    zIndex: 10,
   },
   titulo: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    marginBottom: 10,
-    textAlign: 'center',
-    color: '#333',
-  },
-  buscadorWrapper: {
-    alignItems: 'flex-end',
-    marginBottom: 10,
-  },
-  buscador: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 16,
-    borderColor: '#ccc',
-    borderWidth: 1,
-    width: '100%',
-  },
-  entrada: {
-    flexDirection: 'column',
-    marginBottom: 20,
-    gap: 10,
-  },
-  input: {
-    borderColor: '#ccc',
-    borderWidth: 1,
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: '#fff',
-    fontSize: 16,
-    minHeight: 100,
-    textAlignVertical: 'top',
-  },
-  boton: {
-    backgroundColor: '#6200ee',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    alignSelf: 'center',
-  },
-  botonTexto: {
     color: 'white',
+    fontSize: 30,
     fontWeight: 'bold',
-    fontSize: 16,
+    
   },
   nota: {
-    padding: 12,
     borderRadius: 10,
-    marginBottom: 12,
-    backgroundColor: '#fff',
+    padding: 10,
+    marginHorizontal: 10,
+    marginVertical: 6,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  textoNota: {
-    fontSize: 16,
-    marginBottom: 6,
-    color: '#333',
-  },
-  textoNotaEditable: {
-    fontSize: 16,
-    marginBottom: 6,
-    color: '#333',
-    backgroundColor: '#f0f0f0',
-    borderRadius: 6,
-    padding: 6,
-  },
-  fecha: {
-    fontSize: 12,
-    color: '#999',
-    marginBottom: 10,
+    shadowRadius: 4,
+    elevation: 3,
   },
   notaFila: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
   },
-  iconos: {
+  textoNota: {
+    fontSize: 16,
+    color: '#333',
+  },
+  iconosDerecha: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
   },
-  iconoBtn: {
-    marginLeft: 10,
-  },
-  paleta: {
+  paletaColores: {
     flexDirection: 'row',
-    marginTop: 10,
-    flexWrap: 'wrap',
+    marginTop: 8,
+    justifyContent: 'flex-start',
   },
-  colorBoton: {
+  colorCirculo: {
     width: 30,
     height: 30,
     borderRadius: 15,
     marginRight: 8,
-    marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#ccc',
+    borderColor: '#ddd',
   },
-  fabContainer: {
+  fechaNota: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 6,
+    textAlign: 'right',
+  },
+  menuFlotante: {
     position: 'absolute',
-    bottom: 30,
-    right: 30,
-    alignItems: 'flex-end',
-    gap: 12,
+    bottom: 25,
+    right: 25,
+    alignItems: 'center',
   },
-  fabPrincipal: {
-    backgroundColor: '#ff00aa',
+  botonFlotante: {
+    backgroundColor: '#2196F3',
     width: 60,
     height: 60,
     borderRadius: 30,
@@ -354,13 +564,68 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     elevation: 5,
   },
-  fabOption: {
-    backgroundColor: '#6200ee',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  botonFlotantePequeño: {
+    backgroundColor: '#2196F3',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 4,
-  }
+    position: 'absolute',
+    elevation: 5,
+  },
+  barraBusqueda: {
+    flexDirection: 'row',
+    padding: 10,
+    backgroundColor: '#e1e1e1',
+    alignItems: 'center',
+    marginHorizontal: 10,
+    marginTop: 10,
+    borderRadius: 10,
+  },
+  entradaBusqueda: {
+    flex: 1,
+    fontSize: 16,
+    padding: 6,
+  },
+  modalFondo: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  modalContenido: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 20,
+  },
+  modalTitulo: {
+    fontSize: 20,
+    marginBottom: 10,
+    fontWeight: 'bold',
+  },
+  inputModal: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 16,
+    minHeight: 40,
+    maxHeight: 120,
+    textAlignVertical: 'top',
+  },
+  filaBotonesModal: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 15,
+  },
+  botonModal: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  textoLista: {
+    fontSize: 16,
+    color: '#333',
+  },
 });
